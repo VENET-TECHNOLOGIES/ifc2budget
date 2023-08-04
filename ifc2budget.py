@@ -3,8 +3,24 @@ import ifcopenshell
 import ifcopenshell.geom
 import ifcopenshell.util as util
 import PySimpleGUI as sg
+import re
+import xlsxwriter
+
 from pprint import pprint
 
+
+def open_modal(windowTitle, message):
+    layout = [[sg.Text(message, key="new")]]
+    window = sg.Window(windowTitle, layout, modal=True)
+    choice = None
+    while True:
+        event, values = window.read()
+        if event == "Exit" or event == sg.WIN_CLOSED:
+            break
+        
+    window.close()
+
+ifc_is_read = False
 ifcTree = sg.TreeData()
 
 sgTree=sg.Tree(data=ifcTree,
@@ -22,9 +38,8 @@ sgTree=sg.Tree(data=ifcTree,
 
 
 sg.theme("DarkTeal2")
-layout = [[sg.T("")], [sg.Text("Choose a file: "), sg.Input(), sg.FileBrowse(key="-IN-")],[sg.Button("Read!")],[sgTree]]
+layout = [[sg.T("")], [sg.Text("Choose a file: "), sg.Input(), sg.FileBrowse(key="-IN-"), sg.Button("Read!")],[],[sgTree],[sg.Button("ToExcel!")]]
 settings = ifcopenshell.geom.settings()
-
 
 window =  sg.Window('IFC2Budget', layout, size=(800,600))
 
@@ -39,12 +54,7 @@ while True:
             building = model.by_type("IfcBuilding")
             stories = model.by_type("IfcBuildingStorey")
             stories_list = []
-            for story in stories:
-                # print(story.get_info())
-                # print(story.get_info()["type"])
-                # print(story.get_info()["Name"])
-                # print(story.get_info()["id"])
-                
+            for story in stories:                
                 story_obj = {}
                 story_obj["story"] = story
 
@@ -63,34 +73,59 @@ while True:
                     else:
                         story_obj["decomposition"].append(element)                        
                 stories_list.append(story_obj)
-                
-
-            # rootnodes=[
-            # ["","MH", "Maharashtra", 195, 150, 200],
-            # ["MH", "MUM", "Mumbai", 100, 100,100],
-            # ["MH", "PUN", "Pune", 30, 20, 40],
-            # ["MH", "NGP", "Nagpur", 45, 30, 60],
-            # ["","TEL", "Telangana", 120, 80, 125],
-            # ["TEL", "HYD", "Hyderabad", 75, 55, 80],
-            # ["TEL", "SEC", "Secunderabad", 25, 15, 30],
-            # ["TEL", "NZB", "Nizamabad", 20, 10, 15]
-            # ]
-            # for row in rootnodes:
-            #     ifcTree.Insert( row[0], row[1], row[2], row[3:])
             
             window['-TREE-'].update(ifcTree)
-            #pprint(stories_list)
-            #pprint(site_elements)
-            # iterator = ifcopenshell.geom.iterator(settings, model, multiprocessing.cpu_count())
-            # if iterator.initialize():
-            #     while True:
-            #         element = iterator.get_native()
-            #         object = iterator.get()
-
-            #         print(object.product)
-            #         tree.add_element(element)
-            #         if not iterator.next():
-            #             break
-
+            ifc_is_read = True
         except Exception as error:
             print("Error reading the file! -- ", error)
+    elif event == "ToExcel!":
+        try:
+            if ifc_is_read:
+                print("To Excel")
+                workbook = xlsxwriter.Workbook('ifc.xlsx')
+                worksheet = workbook.add_worksheet()
+                
+                for story in stories_list:
+                    for element in story["decomposition"]:
+                        element_list = []
+                        #print(element.get_info())
+                        e_type = element.get_info()["type"]
+                        e_name = element.get_info()["Name"]
+                        e_name_clean = e_name.split(':')[:-1]
+
+                        if "Ceiling" in e_name_clean:
+                            e_name_clean.remove("Ceiling")
+                        if "Basic Wall" in e_name_clean:
+                            e_name_clean.remove("Basic Wall")    
+                        if "Floor" in e_name_clean:
+                            e_name_clean.remove("Floor")
+                        if "Compound Ceiling" in e_name_clean:
+                            e_name_clean.remove("Compound Ceiling")
+                        if "Railing" in e_name_clean:
+                            e_name_clean.remove("Railing")
+                        if "Cast-In-Place Stair" in e_name_clean:
+                            e_name_clean.remove("Cast-In-Place Stair")
+                        if "Ramp" in e_name_clean:
+                            e_name_clean.remove("Ramp")
+
+                        e_name_clean = (':').join(e_name_clean)
+
+                        try:
+                            e_psets = util.element.get_psets(element)
+                            keys= list(e_psets.keys())
+                            for key in keys:
+                                has_quantities = key.find("Quantities")
+                                if has_quantities > 0:
+                                    print(e_name_clean, "-", e_type, "-", key, "-", e_psets[key])
+                        except Exception as error:
+                            open_modal("Error", "No measurements:" + error)
+
+                workbook.close()
+            else:
+                open_modal("Error", "No IFC loaded!")
+
+        except Exception as error:
+            print("Error building the excel file! -- ", error)
+            
+
+        
