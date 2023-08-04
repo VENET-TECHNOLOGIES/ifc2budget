@@ -4,6 +4,7 @@ import ifcopenshell.geom
 import ifcopenshell.util as util
 import PySimpleGUI as sg
 import re
+import utils
 import xlsxwriter
 
 from pprint import pprint
@@ -19,6 +20,26 @@ def open_modal(windowTitle, message):
             break
         
     window.close()
+
+id_set = ["ID", "Name", "Story", "Space"]
+measurements_set = ["Width", "Height", "Length", "NetArea", "NetSideArea" "OuterSurfaceArea", "GrossSurfaceArea", "GrossFootprintArea", "NetVolume", "NetWeight"]
+
+col_dict = {"ID":                   0, 
+            "Name":                 1, 
+            "Story":                2,
+            "Space":                3,
+            "Width":                4,
+            "Height":               5,
+            "Length":               6,
+            "NetArea":              7,
+            "NetSideArea":          8,
+            "OuterSurfaceArea":     9,
+            "GrossSurfaceArea":     10,
+            "GrossFootprintArea":   11,
+            "NetVolume":            12,
+            "NetWeight":            13,
+            }
+inv_col = {v: k for k, v in col_dict.items()}
 
 ifc_is_read = False
 ifcTree = sg.TreeData()
@@ -37,7 +58,7 @@ sgTree=sg.Tree(data=ifcTree,
                 )
 
 
-sg.theme("DarkTeal2")
+sg.theme("Default1")
 layout = [[sg.T("")], [sg.Text("Choose a file: "), sg.Input(), sg.FileBrowse(key="-IN-"), sg.Button("Read!")],[],[sgTree],[sg.Button("ToExcel!")]]
 settings = ifcopenshell.geom.settings()
 
@@ -59,9 +80,15 @@ while True:
                 story_obj["story"] = story
 
                 decomposition = util.element.get_decomposition(story)
+                
                 story_obj["decomposition"] = []
                 story_obj["spaces"] = []
-                ifcTree.Insert("", story.get_info()["id"], story.get_info()["Name"], [])
+                story_name = story.get_info()["Name"]
+                story_id = story.get_info()["id"]
+                story_obj["name"] = story_name
+                story_obj["id"] = story_id
+
+                ifcTree.Insert("", story_id, story_name, [])
                 for element in decomposition:
                     if element.get_info()['type'] == 'IfcSpace':
                         new_space = {}
@@ -78,47 +105,73 @@ while True:
             ifc_is_read = True
         except Exception as error:
             print("Error reading the file! -- ", error)
+
     elif event == "ToExcel!":
         try:
             if ifc_is_read:
                 print("To Excel")
+                row = 0
+
                 workbook = xlsxwriter.Workbook('ifc.xlsx')
                 worksheet = workbook.add_worksheet()
                 
+                #Setting first row
+                for idx, row_name in enumerate(inv_col):
+                    worksheet.write(row,idx, inv_col[idx])
+                row += 1
+                
                 for story in stories_list:
+                    print("="*20, story["name"], "="*20)
                     for element in story["decomposition"]:
                         element_list = []
                         #print(element.get_info())
-                        e_type = element.get_info()["type"]
-                        e_name = element.get_info()["Name"]
-                        e_name_clean = e_name.split(':')[:-1]
-
-                        if "Ceiling" in e_name_clean:
-                            e_name_clean.remove("Ceiling")
-                        if "Basic Wall" in e_name_clean:
-                            e_name_clean.remove("Basic Wall")    
-                        if "Floor" in e_name_clean:
-                            e_name_clean.remove("Floor")
-                        if "Compound Ceiling" in e_name_clean:
-                            e_name_clean.remove("Compound Ceiling")
-                        if "Railing" in e_name_clean:
-                            e_name_clean.remove("Railing")
-                        if "Cast-In-Place Stair" in e_name_clean:
-                            e_name_clean.remove("Cast-In-Place Stair")
-                        if "Ramp" in e_name_clean:
-                            e_name_clean.remove("Ramp")
-
-                        e_name_clean = (':').join(e_name_clean)
-
+                        e_name, e_type = utils.clean_ifc_element(element)
                         try:
                             e_psets = util.element.get_psets(element)
                             keys= list(e_psets.keys())
                             for key in keys:
                                 has_quantities = key.find("Quantities")
+                                e_quantities = e_psets[key]
+
+                                #This, to excel
                                 if has_quantities > 0:
-                                    print(e_name_clean, "-", e_type, "-", key, "-", e_psets[key])
+                                    print(e_name, "-", e_type, "-", key, "-", e_quantities)
+                                    worksheet.write(row, col_dict["ID"], e_quantities["id"])
+                                    worksheet.write(row, col_dict["Name"], e_name)
+                                    worksheet.write(row, col_dict["Story"], story["name"])
+                                    for measure in measurements_set:
+                                        if measure in e_quantities:
+                                            worksheet.write(row, col_dict[measure], e_quantities[measure])
+                                    row += 1
+
                         except Exception as error:
                             open_modal("Error", "No measurements:" + error)
+                        
+                    for space in story["spaces"]:
+                        space_name = space["space"].get_info()["LongName"]
+                        print("*"*20, space_name, "*"*20)
+                        for element in space["space_decomposition"]:
+                            element_list = []
+                            #print(element.get_info())
+                            e_name, e_type = utils.clean_ifc_element(element)
+                            try:
+                                e_psets = util.element.get_psets(element)
+                                keys= list(e_psets.keys())
+                                for key in keys:
+                                    has_quantities = key.find("Quantities")
+                                    #This, to excel
+                                    if has_quantities > 0:
+                                        print(e_name, "-", e_type, "-", key, "-", e_quantities)
+                                        worksheet.write(row, col_dict["ID"], e_quantities["id"])
+                                        worksheet.write(row, col_dict["Name"], e_name)
+                                        worksheet.write(row, col_dict["Story"], story["name"])
+                                        worksheet.write(row, col_dict["Space"], space_name)
+                                        for measure in measurements_set:
+                                            if measure in e_quantities:
+                                                worksheet.write(row, col_dict[measure], e_quantities[measure])
+                                        row += 1
+                            except Exception as error:
+                                open_modal("Error", "No measurements:" + error)
 
                 workbook.close()
             else:
